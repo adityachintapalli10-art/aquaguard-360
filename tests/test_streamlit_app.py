@@ -14,6 +14,53 @@ import main
 
 @unittest.skipIf(AppTest is None, "Install requirements.txt to run Streamlit deployment tests.")
 class StreamlitDeploymentTests(unittest.TestCase):
+    def test_first_admin_signup_then_login_and_signup_is_disabled(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "signup.db"
+            previous_db = os.environ.get("AQUAGUARD_DB")
+            os.environ["AQUAGUARD_DB"] = str(db_path)
+            try:
+                app = AppTest.from_file(str(Path(__file__).parents[1] / "main.py"), default_timeout=30)
+                app.run()
+                self.assertFalse(app.exception, [exception.message for exception in app.exception])
+                self.assertEqual(
+                    [tab.label for tab in app.tabs],
+                    ["Admin login", "First admin signup"],
+                )
+
+                app.text_input[2].set_value("water-admin")
+                app.text_input[3].set_value("water-admin@example.test")
+                app.text_input[4].set_value("secure-test-password")
+                app.text_input[5].set_value("different-password")
+                app.button[1].click().run()
+                self.assertTrue(any("Passwords do not match" in item.value for item in app.error))
+                with patch.object(main, "DB_PATH", db_path), main.database() as db:
+                    self.assertEqual(db.execute("SELECT COUNT(*) FROM admins").fetchone()[0], 0)
+
+                app.text_input[5].set_value("secure-test-password")
+                app.button[1].click().run()
+                self.assertFalse(app.exception, [exception.message for exception in app.exception])
+                self.assertEqual(len(app.tabs), 0, "Signup must disappear after first admin creation.")
+                self.assertTrue(any("Sign in with your new credentials" in item.value for item in app.success))
+
+                app.text_input[0].set_value("WATER-ADMIN")
+                app.text_input[1].set_value("secure-test-password")
+                app.button[0].click().run()
+                self.assertFalse(app.exception, [exception.message for exception in app.exception])
+                self.assertTrue(any("Water at a glance" in item.value for item in app.header))
+                with patch.object(main, "DB_PATH", db_path), main.database() as db:
+                    admin = db.execute(
+                        "SELECT username,email,password_hash FROM admins"
+                    ).fetchone()
+                    self.assertEqual((admin["username"], admin["email"]),
+                                     ("water-admin", "water-admin@example.test"))
+                    self.assertNotEqual(admin["password_hash"], "secure-test-password")
+            finally:
+                if previous_db is None:
+                    os.environ.pop("AQUAGUARD_DB", None)
+                else:
+                    os.environ["AQUAGUARD_DB"] = previous_db
+
     def test_main_entrypoint_renders_without_binding_a_second_server(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "aquaguard.db"

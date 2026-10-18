@@ -9,6 +9,7 @@ import secrets
 import sqlite3
 import time
 from datetime import timedelta
+import re
 from typing import Any
 
 
@@ -68,11 +69,73 @@ def bootstrap_admin(core: Any, st: Any, admin_config: Any) -> None:
 
 
 def render_login(core: Any, st: Any) -> None:
+    with core.database() as db:
+        admin_exists = db.execute("SELECT 1 FROM admins LIMIT 1").fetchone() is not None
+    if st.session_state.pop("signup_complete", False):
+        st.success("Administrator account created. Sign in with your new credentials.")
+    if not admin_exists:
+        sign_in, sign_up = st.tabs(["Admin login", "First admin signup"])
+        with sign_up:
+            render_first_admin_signup(core, st)
+        with sign_in:
+            render_admin_login(core, st)
+        return
+    render_admin_login(core, st)
+
+
+def render_first_admin_signup(core: Any, st: Any) -> None:
+    st.subheader("Create the first administrator")
+    st.info(
+        "One-time setup: this form is available only while no administrator account exists. "
+        "After the first account is created, public signup is permanently disabled."
+    )
+    with st.form("first_admin_signup"):
+        username = st.text_input("Admin username", max_chars=64, autocomplete="username")
+        email = st.text_input("Admin email", max_chars=254, autocomplete="email")
+        password = st.text_input("Password (12+ characters)", type="password",
+                                 max_chars=128, autocomplete="new-password")
+        confirmation = st.text_input("Confirm password", type="password",
+                                     max_chars=128, autocomplete="new-password")
+        submitted = st.form_submit_button("Create administrator", type="primary")
+    if not submitted:
+        return
+    username = username.strip().lower()
+    email = email.strip().lower()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{3,64}", username):
+        st.error("Username must be 3–64 letters, numbers, dots, underscores, or hyphens.")
+        return
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) or len(email) > 254:
+        st.error("Enter a valid email address.")
+        return
+    if len(password) < 12:
+        st.error("Password must be at least 12 characters.")
+        return
+    if password != confirmation:
+        st.error("Passwords do not match.")
+        return
+    try:
+        with core.database() as db:
+            if db.execute("SELECT 1 FROM admins LIMIT 1").fetchone():
+                st.error("An administrator already exists. Public signup is disabled; sign in instead.")
+                return
+            cursor = db.execute(
+                "INSERT INTO admins(username,email,password_hash,created_at) VALUES(?,?,?,?)",
+                (username, email, core.hash_password(password), core.timestamp()),
+            )
+            core.audit(db, cursor.lastrowid, "admin_signup",
+                       "Initial administrator account created through Streamlit setup.")
+    except sqlite3.IntegrityError:
+        st.error("That username or email is already registered.")
+        return
+    st.session_state.signup_complete = True
+    st.rerun()
+
+
+def render_admin_login(core: Any, st: Any) -> None:
     st.subheader("Administrator sign in")
     st.info(
-        "Admin-only access. For Streamlit Cloud, add `[admin]` credentials to the app's "
-        "Manage app → Settings → Secrets. Use a password of at least 12 characters. "
-        "Do not put production credentials in source control."
+        "Admin-only access. For managed deployments, an administrator may also be provisioned "
+        "using `[admin]` credentials in Streamlit Secrets. Never commit production credentials."
     )
     with st.form("admin_login"):
         identity = st.text_input("Admin email or username", autocomplete="username")

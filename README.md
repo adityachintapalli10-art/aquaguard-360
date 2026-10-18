@@ -21,7 +21,7 @@ The default database is `data/aquaguard.db`. Set `AQUAGUARD_DB` to another SQLit
 
 This repository supports Streamlit Cloud directly. In the app's deployment settings, select **`main.py`** as the app's main file. Streamlit owns the web-server port; `main.py` detects the Streamlit runtime and renders the native Streamlit UI instead of starting the standalone HTTP server. This avoids the address-in-use error from attempting to bind a second server to Streamlit's port.
 
-Add the initial administrator credentials in **Manage app → Settings → Secrets** (do not commit secrets to GitHub):
+On first launch, use the **First admin signup** tab to create the initial administrator, then sign in. Signup validates the username, email, and matching 12-character-minimum password. It is automatically removed from the app as soon as the first account exists; public registration is not available afterward. Existing deployments may also provision the initial account through **Manage app → Settings → Secrets** (never commit credentials to GitHub):
 
 ```toml
 demo_mode = true

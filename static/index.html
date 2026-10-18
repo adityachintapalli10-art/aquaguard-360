@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1724">
+  <title>AquaGuard 360 — Water intelligence</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div id="login-view" class="login-wrap" hidden>
+    <section class="login-card">
+      <div class="brand-mark large">A<span>·</span></div>
+      <p class="eyebrow">SMART WATER OPERATIONS</p>
+      <h1>Welcome back</h1>
+      <p class="muted">Sign in to your AquaGuard command center.</p>
+      <form id="login-form">
+        <label for="username">Admin email or username</label>
+        <input id="username" name="username" autocomplete="username" required>
+        <div class="password-label"><label for="password">Password</label><button type="button" id="toggle-password" class="text-button">Show</button></div>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <p id="login-error" class="form-error" role="alert"></p>
+        <button type="submit" class="button primary full" id="login-submit">Sign in securely <span>→</span></button>
+      </form>
+      <p class="login-foot">Administrator access only <span>·</span> No public registration</p>
+    </section>
+    <div class="login-aside"><span class="orb orb-one"></span><span class="orb orb-two"></span>
+      <p class="eyebrow">SEE EVERY DROP</p><h2>Clarity for every<br>water network.</h2>
+      <p>Monitor supply, understand demand, and investigate unusual flow — all in one place.</p>
+      <div class="aside-stat"><b>360°</b><span>water visibility<br>from source to street</span></div>
+    </div>
+  </div>
+
+  <div id="app" class="app-shell" hidden>
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="#" aria-label="AquaGuard home"><span class="brand-mark">A<span>·</span></span><span class="brand-name">AquaGuard<small>360 WATER INTELLIGENCE</small></span></a>
+      <div class="workspace-label">WORKSPACE</div>
+      <nav id="navigation" aria-label="Main navigation">
+        <button class="nav-link active" data-view="dashboard"><span class="nav-icon">◫</span> Overview</button>
+        <button class="nav-link" data-view="areas"><span class="nav-icon">⌖</span> Areas &amp; streets</button>
+        <button class="nav-link" data-view="devices"><span class="nav-icon">◉</span> Meters &amp; sensors</button>
+        <button class="nav-link" data-view="readings"><span class="nav-icon">⌁</span> Flow monitoring</button>
+        <button class="nav-link" data-view="alerts"><span class="nav-icon">⚑</span> Alerts <span id="nav-alert-count" class="nav-count" hidden>0</span></button>
+        <button class="nav-link" data-view="maintenance"><span class="nav-icon">⌁</span> Maintenance</button>
+        <button class="nav-link" data-view="reports"><span class="nav-icon">▤</span> Reports</button>
+        <button class="nav-link" data-view="audit"><span class="nav-icon">◷</span> Audit log</button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="mode-card"><span class="mode-dot"></span><div><b>Demo workspace</b><small>Simulated data clearly marked</small></div></div>
+        <button class="nav-link" data-view="settings"><span class="nav-icon">⚙</span> System settings</button>
+        <div class="profile"><div class="avatar">AG</div><div class="profile-info"><b id="admin-name">Administrator</b><small>System admin</small></div><button id="logout" class="icon-button" aria-label="Sign out" title="Sign out">↗</button></div>
+      </div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <button id="menu-toggle" class="icon-button mobile-menu" aria-label="Open navigation">☰</button>
+        <div class="breadcrumbs"><span>Water operations</span><b>/</b><strong id="crumb">Overview</strong></div>
+        <div class="top-actions"><span class="environment"><i></i> DEMO MODE</span><span class="top-divider"></span><span class="utc-clock" id="clock">UTC</span><button class="avatar small-avatar" aria-label="Administrator account">AG</button></div>
+      </header>
+      <div class="content">
+        <div id="toast-region" class="toast-region" aria-live="polite"></div>
+        <section id="page"></section>
+        <footer class="footer"><span>© 2026 AquaGuard 360</span><span>Measurements are labeled by source; alerts indicate suspected issues only.</span></footer>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

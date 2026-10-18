@@ -74,6 +74,15 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS login_attempts (
                 id INTEGER PRIMARY KEY, ip TEXT NOT NULL, attempted_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS admin_recovery_codes (
+                id INTEGER PRIMARY KEY,
+                admin_id INTEGER NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
+                code_hash TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                used_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_recovery_codes_admin
+                ON admin_recovery_codes(admin_id, used_at);
             CREATE TABLE IF NOT EXISTS areas (
                 id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT NOT NULL DEFAULT '',
                 description TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL

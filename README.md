@@ -36,6 +36,10 @@ On first launch the app creates the administrator using the existing password ha
 
 The Streamlit deployment provides sign-in, dashboard, locality/street management, device registration, demo simulation, alert acknowledgement, maintenance list, audit log, and CSV downloads. Streamlit Cloud does **not** expose the standalone `/api/v1/telemetry` HTTP endpoint from this app; use the Docker/local server deployment behind HTTPS for external sensor ingestion.
 
+### Forgot password and recovery codes
+
+After signing in, open **Settings → Password recovery**, confirm the warning, and generate a set of ten recovery codes. Save or download them securely; they are displayed only once, while only hashes are stored. Generating a replacement set invalidates all prior codes. If you forget your password, use **Forgot password**, submit your admin username/email and one unused code, then set a new password. A code is consumed once, attempts are rate limited, and a successful reset revokes active server sessions. Keep unused codes private and regenerate them if exposed.
+
 ## Docker
 
 ```sh

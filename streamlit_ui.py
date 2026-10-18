@@ -1,4 +1,4 @@
-"""Streamlit-native AquaGuard interface, sharing the app's SQLite and alert logic."""
+"""Streamlit-native AquaGuard interface sharing the app's persistent storage and alert logic."""
 
 from __future__ import annotations
 
@@ -73,6 +73,8 @@ def render_login(core: Any, st: Any) -> None:
         admin_exists = db.execute("SELECT 1 FROM admins LIMIT 1").fetchone() is not None
     if st.session_state.pop("signup_complete", False):
         st.success("Administrator account created. Sign in with your new credentials.")
+    if st.session_state.pop("password_recovery_complete", False):
+        st.success("Password reset. Sign in with your new password; your recovery code was consumed.")
     if not admin_exists:
         sign_in, sign_up = st.tabs(["Admin login", "First admin signup"])
         with sign_up:
@@ -80,7 +82,11 @@ def render_login(core: Any, st: Any) -> None:
         with sign_in:
             render_admin_login(core, st)
         return
-    render_admin_login(core, st)
+    sign_in, forgot_password = st.tabs(["Admin login", "Forgot password"])
+    with sign_in:
+        render_admin_login(core, st)
+    with forgot_password:
+        render_password_recovery(core, st)
 
 
 def render_first_admin_signup(core: Any, st: Any) -> None:
@@ -171,6 +177,97 @@ def render_admin_login(core: Any, st: Any) -> None:
         st.session_state.admin_id = admin["id"]
         st.session_state.username = admin["username"]
         st.session_state.expires_at = time.time() + core.SESSION_HOURS * 3600
+    st.rerun()
+
+
+def hash_recovery_code(code: str) -> str:
+    return hashlib.sha256(code.encode("ascii")).hexdigest()
+
+
+def generate_recovery_codes(core: Any, admin_id: int) -> list[str]:
+    codes = [secrets.token_hex(16).upper() for _ in range(10)]
+    with core.database() as db:
+        db.execute("DELETE FROM admin_recovery_codes WHERE admin_id=?", (admin_id,))
+        db.executemany(
+            """INSERT INTO admin_recovery_codes(admin_id,code_hash,created_at)
+               VALUES(?,?,?)""",
+            [(admin_id, hash_recovery_code(code), core.timestamp()) for code in codes],
+        )
+        core.audit(db, admin_id, "recovery_codes_generated",
+                   "Generated 10 one-time administrator recovery codes; previous codes invalidated.")
+    return ["-".join(code[i:i + 4] for i in range(0, len(code), 4)) for code in codes]
+
+
+def render_password_recovery(core: Any, st: Any) -> None:
+    st.subheader("Reset your admin password")
+    st.info("Use one unused recovery code generated earlier in Settings. Each code works once.")
+    with st.form("admin_password_recovery"):
+        identity = st.text_input("Admin email or username", key="recovery_identity")
+        code = st.text_input("Recovery code", key="recovery_code",
+                             help="Enter one of your saved codes; hyphens and spaces are ignored.")
+        password = st.text_input("New password (12+ characters)", type="password",
+                                 key="recovery_new_password", max_chars=128)
+        confirmation = st.text_input("Confirm new password", type="password",
+                                     key="recovery_confirm_password", max_chars=128)
+        submitted = st.form_submit_button("Reset password", type="primary")
+    if not submitted:
+        return
+    if len(password) < 12:
+        st.error("New password must be at least 12 characters.")
+        return
+    if password != confirmation:
+        st.error("Passwords do not match.")
+        return
+    normalized_code = re.sub(r"[\s-]", "", code).upper()
+    if not re.fullmatch(r"[0-9A-F]{32}", normalized_code):
+        st.error("Unable to verify that account and recovery code.")
+        return
+    identity = identity.strip().lower()
+    rate_key = f"recovery:{identity[:180]}"
+    now = core.timestamp()
+    with core.database() as db:
+        db.execute("DELETE FROM login_attempts WHERE attempted_at<?",
+                   (core.timestamp(core.utc_now() - timedelta(minutes=15)),))
+        attempts = db.execute(
+            "SELECT COUNT(*) FROM login_attempts WHERE ip=? AND attempted_at>=?",
+            (rate_key, core.timestamp(core.utc_now() - timedelta(minutes=5))),
+        ).fetchone()[0]
+        if attempts >= 10:
+            st.error("Too many recovery attempts. Wait a few minutes and try again.")
+            return
+        admin = db.execute(
+            "SELECT id FROM admins WHERE lower(username)=? OR lower(email)=?",
+            (identity, identity),
+        ).fetchone()
+        valid_code = None
+        if admin:
+            valid_code = db.execute(
+                """SELECT id FROM admin_recovery_codes
+                   WHERE admin_id=? AND code_hash=? AND used_at IS NULL""",
+                (admin["id"], hash_recovery_code(normalized_code)),
+            ).fetchone()
+        if not admin or not valid_code:
+            db.execute("INSERT INTO login_attempts(ip,attempted_at) VALUES(?,?)", (rate_key, now))
+            core.audit(db, admin["id"] if admin else None, "password_recovery_failed",
+                       "Invalid administrator identity or recovery code.")
+            st.error("Unable to verify that account and recovery code.")
+            return
+        cursor = db.execute(
+            """UPDATE admin_recovery_codes SET used_at=?
+               WHERE id=? AND used_at IS NULL""",
+            (now, valid_code["id"]),
+        )
+        if cursor.rowcount != 1:
+            db.execute("INSERT INTO login_attempts(ip,attempted_at) VALUES(?,?)", (rate_key, now))
+            st.error("Unable to verify that account and recovery code.")
+            return
+        db.execute("UPDATE admins SET password_hash=? WHERE id=?",
+                   (core.hash_password(password), admin["id"]))
+        db.execute("DELETE FROM sessions WHERE admin_id=?", (admin["id"],))
+        db.execute("DELETE FROM login_attempts WHERE ip=?", (rate_key,))
+        core.audit(db, admin["id"], "password_recovered",
+                   "Administrator password reset using a one-time recovery code; sessions revoked.")
+    st.session_state.password_recovery_complete = True
     st.rerun()
 
 
@@ -522,7 +619,6 @@ def render_audit(st: Any, db: sqlite3.Connection) -> None:
 
 def render_settings(core: Any, st: Any) -> None:
     st.header("System settings")
-    st.metric("Database", "SQLite")
     st.caption(f"Session timeout: {core.SESSION_HOURS} hours · timestamps in UTC")
     st.warning(
         "Streamlit Cloud's local disk can be ephemeral. Back up data externally or configure "
@@ -530,9 +626,40 @@ def render_settings(core: Any, st: Any) -> None:
         "ingestion requires the standalone API deployment; Streamlit Cloud does not expose "
         "the app's separate /api/v1/telemetry server."
     )
-    st.code(
-        '[admin]\nusername = "admin"\nemail = "admin@example.com"\n'
-        'password = "use-a-unique-password-of-12-or-more-characters"\n\n'
-        'demo_mode = true',
-        language="toml",
+    st.subheader("Password recovery")
+    st.caption(
+        "Recovery codes are stored as hashes. Each code can reset your password once. "
+        "Generating a new set invalidates every code from the previous set."
     )
+    codes = st.session_state.get("recovery_codes_display")
+    if codes:
+        st.warning("Save these codes somewhere private now. They are shown only once.")
+        codes_text = "\n".join(codes)
+        st.code(codes_text, language="text")
+        st.download_button(
+            "Download recovery codes",
+            codes_text,
+            file_name="aquaguard-recovery-codes.txt",
+            mime="text/plain",
+            key="download_recovery_codes",
+        )
+        if st.button("I saved these codes", key="dismiss_recovery_codes"):
+            del st.session_state["recovery_codes_display"]
+            st.rerun()
+    else:
+        with core.database() as db:
+            remaining = db.execute(
+                """SELECT COUNT(*) FROM admin_recovery_codes
+                   WHERE admin_id=? AND used_at IS NULL""",
+                (st.session_state.admin_id,),
+            ).fetchone()[0]
+        st.metric("Unused recovery codes", remaining)
+        confirm = st.checkbox(
+            "I understand that generating new codes invalidates my existing codes.",
+            key="confirm_recovery_code_rotation",
+        )
+        if st.button("Generate recovery codes", type="primary", disabled=not confirm):
+            st.session_state.recovery_codes_display = generate_recovery_codes(
+                core, st.session_state.admin_id
+            )
+            st.rerun()

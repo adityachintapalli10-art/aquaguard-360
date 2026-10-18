@@ -14,6 +14,78 @@ import main
 
 @unittest.skipIf(AppTest is None, "Install requirements.txt to run Streamlit deployment tests.")
 class StreamlitDeploymentTests(unittest.TestCase):
+    def test_recovery_codes_reset_password_once_and_revoke_sessions(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "recovery.db"
+            previous_db = os.environ.get("AQUAGUARD_DB")
+            os.environ["AQUAGUARD_DB"] = str(db_path)
+            try:
+                with patch.object(main, "DB_PATH", db_path):
+                    main.init_db()
+                    main.create_admin("admin", "admin@example.test", "original-test-password")
+                app = AppTest.from_file(str(Path(__file__).parents[1] / "main.py"), default_timeout=30)
+                app.run()
+                app.text_input[0].set_value("admin")
+                app.text_input[1].set_value("original-test-password")
+                app.button[0].click().run()
+                self.assertFalse(app.exception, [exception.message for exception in app.exception])
+
+                app.radio[0].set_value("Settings").run()
+                self.assertFalse(app.exception, [exception.message for exception in app.exception])
+                app.checkbox[0].check().run()
+                generate = next(button for button in app.button if button.label == "Generate recovery codes")
+                generate.click().run()
+                self.assertFalse(app.exception, [exception.message for exception in app.exception])
+                self.assertTrue(app.code)
+                codes = app.code[0].value.splitlines()
+                self.assertEqual(len(codes), 10)
+                recovery_code = codes[0]
+
+                with patch.object(main, "DB_PATH", db_path), main.database() as db:
+                    self.assertEqual(
+                        db.execute("SELECT COUNT(*) FROM admin_recovery_codes WHERE used_at IS NULL").fetchone()[0],
+                        10,
+                    )
+                    self.assertNotIn(recovery_code.replace("-", ""), [
+                        row["code_hash"] for row in db.execute("SELECT code_hash FROM admin_recovery_codes")
+                    ])
+
+                next(button for button in app.button if button.label == "Sign out").click().run()
+                self.assertFalse(app.exception, [exception.message for exception in app.exception])
+                self.assertEqual([tab.label for tab in app.tabs], ["Admin login", "Forgot password"])
+                self.assertTrue(any("Reset your admin password" in item.value for item in app.subheader))
+                app.text_input[2].set_value("admin@example.test")
+                app.text_input[3].set_value(recovery_code)
+                app.text_input[4].set_value("replacement-test-password")
+                app.text_input[5].set_value("replacement-test-password")
+                app.button[1].click().run()
+                self.assertFalse(app.exception, [exception.message for exception in app.exception])
+                self.assertTrue(any("Password reset." in item.value for item in app.success))
+                app.text_input[2].set_value("admin")
+                app.text_input[3].set_value(recovery_code)
+                app.text_input[4].set_value("another-test-password")
+                app.text_input[5].set_value("another-test-password")
+                app.button[1].click().run()
+                self.assertFalse(app.exception, [exception.message for exception in app.exception])
+                self.assertTrue(any("Unable to verify" in item.value for item in app.error))
+                with patch.object(main, "DB_PATH", db_path), main.database() as db:
+                    self.assertEqual(
+                        db.execute("SELECT COUNT(*) FROM admin_recovery_codes WHERE used_at IS NOT NULL").fetchone()[0],
+                        1,
+                    )
+                    self.assertEqual(db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0], 0)
+
+                app.text_input[0].set_value("admin")
+                app.text_input[1].set_value("replacement-test-password")
+                app.button[0].click().run()
+                self.assertFalse(app.exception, [exception.message for exception in app.exception])
+                self.assertTrue(any("Water at a glance" in item.value for item in app.header))
+            finally:
+                if previous_db is None:
+                    os.environ.pop("AQUAGUARD_DB", None)
+                else:
+                    os.environ["AQUAGUARD_DB"] = previous_db
+
     def test_first_admin_signup_then_login_and_signup_is_disabled(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "signup.db"
@@ -40,7 +112,11 @@ class StreamlitDeploymentTests(unittest.TestCase):
                 app.text_input[5].set_value("secure-test-password")
                 app.button[1].click().run()
                 self.assertFalse(app.exception, [exception.message for exception in app.exception])
-                self.assertEqual(len(app.tabs), 0, "Signup must disappear after first admin creation.")
+                self.assertEqual(
+                    [tab.label for tab in app.tabs],
+                    ["Admin login", "Forgot password"],
+                    "Signup must disappear after first admin creation.",
+                )
                 self.assertTrue(any("Sign in with your new credentials" in item.value for item in app.success))
 
                 app.text_input[0].set_value("WATER-ADMIN")

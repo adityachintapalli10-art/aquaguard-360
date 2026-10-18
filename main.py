@@ -590,11 +590,12 @@ class AquaHandler(BaseHTTPRequestHandler):
                 self.send_error_json(409, "No active simulated devices. Register a simulated device first.")
                 return
             created = []
+            simulation_time = utc_now().replace(microsecond=0)
             for index, device in enumerate(devices):
                 flow = round(device["threshold_lpm"] * (2.2 if scenario == "high-flow" else 0.55 + (index % 4) * 0.08), 1)
                 sample_count = 3 if scenario == "high-flow" else 1
                 for sample in range(sample_count):
-                    measured = utc_now() - timedelta(minutes=sample_count - sample - 1)
+                    measured = simulation_time - timedelta(minutes=sample_count - sample - 1)
                     reading = {"timestamp": timestamp(measured), "flowRateLpm": flow, "quality": "valid"}
                     created.append(record_reading(db, device, reading, "simulated"))
             audit(db, admin["id"], "simulation_run", f"Generated {len(created)} simulated readings ({scenario}).")
@@ -737,5 +738,26 @@ def main() -> None:
         httpd.server_close()
 
 
+def streamlit_main() -> None:
+    """Render the app inside Streamlit instead of starting a conflicting HTTP server."""
+    global DB_PATH
+    if "AQUAGUARD_DB" not in os.environ:
+        DB_PATH = Path.home() / ".aquaguard-360" / "aquaguard.db"
+    from streamlit_ui import render_streamlit_app
+
+    render_streamlit_app(sys.modules[__name__])
+
+
+def is_streamlit_runtime() -> bool:
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+    except ImportError:
+        return False
+    return get_script_run_ctx(suppress_warning=True) is not None
+
+
 if __name__ == "__main__":
-    main()
+    if is_streamlit_runtime():
+        streamlit_main()
+    else:
+        main()

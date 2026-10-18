@@ -17,6 +17,25 @@ The account setup asks for a username, email, and password (at least 12 characte
 
 The default database is `data/aquaguard.db`. Set `AQUAGUARD_DB` to another SQLite file path to change it. The `data/` directory is ignored by Git. Set `SESSION_HOURS` to adjust the session lifetime. For a local HTTPS reverse proxy, set `COOKIE_SECURE=true` so session cookies are only sent over HTTPS.
 
+## Deploy on Streamlit Community Cloud
+
+This repository supports Streamlit Cloud directly. In the app's deployment settings, select **`main.py`** as the app's main file. Streamlit owns the web-server port; `main.py` detects the Streamlit runtime and renders the native Streamlit UI instead of starting the standalone HTTP server. This avoids the address-in-use error from attempting to bind a second server to Streamlit's port.
+
+Add the initial administrator credentials in **Manage app → Settings → Secrets** (do not commit secrets to GitHub):
+
+```toml
+demo_mode = true
+
+[admin]
+username = "admin"
+email = "admin@example.com"
+password = "replace-with-a-unique-password-of-at-least-12-characters"
+```
+
+On first launch the app creates the administrator using the existing password hash and initializes demo data if `demo_mode` is enabled. Streamlit Cloud's local disk may be ephemeral; this demo stores its SQLite database under the app user's home directory. Do not rely on that storage for durable production records without an external persistent database and backups.
+
+The Streamlit deployment provides sign-in, dashboard, locality/street management, device registration, demo simulation, alert acknowledgement, maintenance list, audit log, and CSV downloads. Streamlit Cloud does **not** expose the standalone `/api/v1/telemetry` HTTP endpoint from this app; use the Docker/local server deployment behind HTTPS for external sensor ingestion.
+
 ## Docker
 
 ```sh
@@ -95,9 +114,10 @@ An alert is only raised after three consecutive valid readings exceed the device
 
 ## Tests
 
-Run the Python standard-library integration tests:
+Install `requirements.txt` for Streamlit deployment and run the API plus Streamlit entry-point tests:
 
 ```powershell
+python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
 ```
 

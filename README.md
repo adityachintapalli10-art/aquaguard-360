@@ -1,134 +1,76 @@
 # AquaGuard 360
 
-A self-contained, demo-first water monitoring app for a hackathon. It includes an administrator-only dashboard, a persistent API, simulated readings, threshold alerts, device-authenticated telemetry ingestion, and CSV export. The UI explicitly distinguishes simulated data from hardware readings and marks alerts as suspected issues—not proof of a physical leak.
+AI-ready smart water monitoring and leakage detection system (Mohan Babu University hackathon project).
+Measure flow, understand consumption, detect water loss - through a secure, admin-only dashboard.
 
-## Run locally
+> A water-balance gap or flow anomaly means *unaccounted-for water*, **not proof of a leak**.
+> The system flags conditions for an admin to investigate.
 
-Requires Python 3.10 or newer; no JavaScript build or third-party Python package installation is required.
+## What's inside
 
-```powershell
-python main.py init-db
-python main.py create-admin
-python main.py seed-demo
-python main.py
+| Path | Purpose |
+|---|---|
+| `backend/app.py` | Flask app: admin login, dashboard API, device ingest, CSV reports |
+| `backend/rules.py` | Detection rules: continuous flow, night flow, sudden spike, water-balance gap, sensor fault |
+| `backend/db.py` | SQLite schema, thresholds, volume calculation |
+| `backend/templates`, `backend/static` | Dashboard UI (vanilla JS, no CDN, no build step) |
+| `backend/seed.py` | Create the first admin + optional **simulated** demo data |
+| `backend/simulator.py` | Streams simulated readings to the server (`--leak 04`, `--spike DEVICE`) |
+| `firmware/esp32_flow_meter` | Arduino sketch for ESP32 + YF-S201 flow sensor (HTTPS, NTP timestamps) |
+| `tests/` | pytest tests for auth, CSRF, ingest validation, alerts, CSV safety |
+| `docs/` | Architecture notes and the hackathon presentation |
+
+Dashboard modules (from the slides): Dashboard, Areas & Streets, Flow & Consumption, Leakage Alerts,
+IoT Devices, Maintenance log (per alert), Reports (CSV / print to PDF), Audit Logs & Settings.
+
+## Quick start
+
+```bash
+python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cd backend
+export AQUAGUARD_SECRET_KEY=$(python -c "import secrets;print(secrets.token_hex(32))")
+python seed.py --admin admin --demo     # asks for a password (min 12 chars); --demo adds simulated data
+python app.py                           # http://127.0.0.1:5000
 ```
 
-The account setup asks for a username, email, and password (at least 12 characters); credentials are not shipped in the repository. Open <http://127.0.0.1:8000> and sign in. To skip sample data, omit `seed-demo`. Sample locality names and readings are explicitly identified as demo data and are not real measurements or locations.
+Log in, and Street 04 will show a **high** water-balance alert from the simulated leak.
+Live demo: in a second terminal run `python simulator.py --leak 04` (keys come from `simulator_keys.json`).
 
-The default database is `data/aquaguard.db`. Set `AQUAGUARD_DB` to another SQLite file path to change it. The `data/` directory is ignored by Git. Set `SESSION_HOURS` to adjust the session lifetime. For a local HTTPS reverse proxy, set `COOKIE_SECURE=true` so session cookies are only sent over HTTPS.
+Tests: `pip install pytest && pytest` from the repo root.
 
-## Deploy on Streamlit Community Cloud
+## Real hardware (ESP32)
 
-This repository supports Streamlit Cloud directly. In the app's deployment settings, select **`main.py`** as the app's main file. Streamlit owns the web-server port; `main.py` detects the Streamlit runtime and renders the native Streamlit UI instead of starting the standalone HTTP server. This avoids the address-in-use error from attempting to bind a second server to Streamlit's port.
+1. Dashboard -> **Devices** -> register a device (role *inlet* or *downstream*, mode *hardware*). Copy the API key (shown once).
+2. In `firmware/esp32_flow_meter/`, copy `secrets.h.example` to `secrets.h` and fill in Wi-Fi, server URL, key.
+3. Flash with Arduino IDE (ESP32 board package). Calibrate `PULSES_PER_L` against a known volume.
 
-On first launch, use the **First admin signup** tab to create the initial administrator, then sign in. Signup validates the username, email, and matching 12-character-minimum password. It is automatically removed from the app as soon as the first account exists; public registration is not available afterward. Existing deployments may also provision the initial account through **Manage app → Settings → Secrets** (never commit credentials to GitHub):
+Ingest API: `POST /api/ingest`, header `X-API-Key`, body `{"ts":"2026-01-01T10:00:00Z","flow_lpm":12.5,"total_l":340.2}`.
+Timestamps must be UTC and within 5 min of server time; repeated/older timestamps are rejected (replay protection).
+Demo devices are labelled *simulated* in the UI so they are never confused with real measurements.
 
-```toml
-demo_mode = true
+## Security notes
 
-[admin]
-username = "admin"
-email = "admin@example.com"
-password = "replace-with-a-unique-password-of-at-least-12-characters"
+- No public sign-up; admins are created from the command line. Passwords are hashed (Werkzeug).
+- Every `/api/*` admin route checks the session server-side; state-changing calls need a CSRF token.
+- Login throttling, secure cookie flags, strict CSP, audit log of admin actions, CSV formula-injection guard.
+- Device keys are stored as SHA-256 hashes. Use HTTPS in production (reverse proxy such as nginx/Caddy) and set `AQUAGUARD_HTTPS=1`.
+- The login throttle is in-memory and single-process; use a shared store if you run several workers.
+
+## Production
+
+```bash
+cd backend && gunicorn -w 1 -b 127.0.0.1:8000 "app:create_app()"
+# cron/systemd timer every minute so offline sensors raise alerts:
+flask --app app run-rules
 ```
+SQLite is fine for a hackathon/pilot; move to PostgreSQL/TimescaleDB for large deployments (see `docs/ARCHITECTURE.md`).
 
-On first launch the app creates the administrator using the existing password hash and initializes demo data if `demo_mode` is enabled. Streamlit Cloud's local disk may be ephemeral; this demo stores its SQLite database under the app user's home directory. Do not rely on that storage for durable production records without an external persistent database and backups.
+## Roadmap (from the deck)
 
-The Streamlit deployment provides sign-in, dashboard, locality/street management, device registration, demo simulation, alert acknowledgement, maintenance list, audit log, and CSV downloads. Streamlit Cloud does **not** expose the standalone `/api/v1/telemetry` HTTP endpoint from this app; use the Docker/local server deployment behind HTTPS for external sensor ingestion.
+Stage 1 software demo (done) -> Stage 2 physical ESP32 prototype (firmware included) -> Stage 3 pressure sensors,
+ML anomaly detection, forecasting, heatmap, email/SMS notifications.
 
-### Forgot password and recovery codes
+## License
 
-After signing in, open **Settings → Password recovery**, confirm the warning, and generate a set of ten recovery codes. Save or download them securely; they are displayed only once, while only hashes are stored. Generating a replacement set invalidates all prior codes. If you forget your password, use **Forgot password**, submit your admin username/email and one unused code, then set a new password. A code is consumed once, attempts are rate limited, and a successful reset revokes active server sessions. Keep unused codes private and regenerate them if exposed.
-
-## Docker
-
-```sh
-docker compose build
-docker compose run --rm aquaguard python main.py create-admin
-docker compose run --rm aquaguard python main.py seed-demo
-docker compose up
-```
-
-Open <http://localhost:8000>. Compose persists the SQLite database in a named Docker volume. For a public deployment, terminate TLS at a trusted reverse proxy and set `COOKIE_SECURE=true`; do not expose the demo's plain HTTP listener directly to the Internet.
-
-## Demo workflow
-
-1. Sign in with the administrator account created above.
-2. Explore the sample locality, streets, meters, and labeled 24-hour simulated history.
-3. Select **Run simulation** on the overview to record another simulated sample.
-4. Register another simulated meter under **Meters & sensors** and click **Test alert** on the dashboard to generate a high-flow demo scenario.
-5. A reading over a meter's configured threshold creates a deduplicated open alert. Acknowledge it to preserve the action in the audit log and create an investigation task.
-6. Download the raw readings CSV under **Reports**.
-
-All timestamps are stored in UTC. Dashboard meter totals are deliberately not summed across potentially overlapping upstream/downstream boundaries. A flow-threshold event is a possible anomaly, not automatic leak confirmation. The excess-volume figure is a rough threshold-based estimate for 10 minutes, not measured loss or water saved.
-
-## API
-
-All `/api/*` endpoints require an administrator session except `/api/login`, `/api/health`, and the device-authenticated telemetry endpoint. The session is an opaque, random, server-side record in an `HttpOnly`, `SameSite=Strict` cookie; mutating admin requests require the `X-CSRF-Token` returned at login or by `GET /api/session`. There is no public registration.
-
-| Method | Endpoint | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/login` | Admin sign-in (`username`, `password`) |
-| `GET` | `/api/session` | Current admin session and CSRF token |
-| `POST` | `/api/logout` | Revoke the current session |
-| `GET` | `/api/dashboard` | Summary, hourly flow samples, open alerts |
-| `GET`, `POST` | `/api/areas` | List or create a locality with optional streets |
-| `GET`, `POST` | `/api/devices` | List or register simulated/hardware devices |
-| `PATCH` | `/api/devices/{id}` | Change a device threshold or enable/disable it |
-| `GET` | `/api/readings` | Up to 200 recent readings |
-| `POST` | `/api/simulate` | Generate clearly labeled simulated readings (`normal` or `high-flow`) |
-| `GET` | `/api/alerts` | Alert history |
-| `POST` | `/api/alerts/{id}/acknowledge` | Acknowledge an alert and create an investigation task |
-| `GET` | `/api/maintenance` | Investigation queue |
-| `GET` | `/api/audit` | Recent administrative audit events |
-| `GET` | `/api/reports.csv` | Download up to 10,000 raw readings as CSV |
-| `GET` | `/api/settings` | Runtime and integration status |
-| `POST` | `/api/v1/telemetry` | Submit device-authenticated hardware telemetry |
-
-### Device telemetry
-
-Register a device with source `hardware` in the authenticated UI. The one-time response includes a randomly generated device key; only its SHA-256 hash is stored. Set that key on the device as a secret and send it in the `X-Device-Key` header over HTTPS:
-
-```http
-POST /api/v1/telemetry
-Content-Type: application/json
-X-Device-Key: <device key>
-
-{
-  "deviceId": "FLOW-001",
-  "timestamp": "2026-10-17T10:30:00Z",
-  "flowRateLpm": 12.5,
-  "totalVolumeLiters": 45820.5,
-  "pressureKpa": 250,
-  "quality": "valid"
-}
-```
-
-`deviceId`, timezone-qualified ISO-8601 `timestamp`, and a finite `flowRateLpm` from 0 to 100000 are required. Timestamps must be within the previous 24 hours and no more than five minutes in the future. Non-negative `totalVolumeLiters` and `pressureKpa` are optional. `quality` may be `valid`, `suspect`, or `invalid`. Unsupported fields and repeated device/timestamp pairs are rejected. The per-device key, timestamp window, unique device/timestamp constraint, and 120-request-per-minute device rate limit provide basic device authentication and duplicate replay protection; this demo does not implement signed payloads, credential rotation, or MQTT. Never use it without HTTPS and an operational security review.
-
-An alert is only raised after three consecutive valid readings exceed the device threshold across at least two minutes. A single spike does not trigger an alert. Alerts are deduplicated while open; acknowledging one records the admin action and creates an investigation task. The sample demo data has no confirmed leak event.
-
-## Security and operation notes
-
-- Passwords use Python's scrypt password KDF; session tokens are random and stored hashed in SQLite. Administrator creation is a one-time CLI operation; the browser has no registration route. Password reset, MFA, and multiple administrator provisioning are not included.
-- Login failures are rate-limited by source IP. Admin write endpoints use CSRF tokens and same-site cookies; SQL uses bound parameters and request bodies are size-limited.
-- Hardware device keys are issued once and stored only as SHA-256 hashes. Disable or rotate access operationally by replacing the device record/database credential; a UI credential-rotation workflow is not included.
-- Use the application on a trusted network or behind an HTTPS reverse proxy. Configure persistent storage, backups, monitoring, and secure secret delivery before handling real telemetry.
-- No email/SMS provider is configured; alerts are in-app only.
-
-## Tests
-
-Install `requirements.txt` for Streamlit deployment and run the API plus Streamlit entry-point tests:
-
-```powershell
-python -m pip install -r requirements.txt
-python -m unittest discover -s tests -v
-```
-
-They exercise unauthenticated access, login, CSRF enforcement, locality/device creation, authenticated telemetry, payload rejection, alert acknowledgement, task creation, and CSV export.
-
-## Architecture and known limitations
-
-`main.py` is the Python entry point and contains a standard-library threaded HTTP server, REST handlers, scrypt/session auth, the SQLite schema, demo simulator, alert rules, audit trail, and CSV export. `static/` is a responsive, dependency-free admin UI; `tests/` covers the primary API workflow.
-
-This is deliberately a compact hackathon implementation, not a production municipal deployment. It uses SQLite and a small browser UI rather than the requested React/FastAPI/PostgreSQL stack; this keeps the project runnable with the Python runtime alone. There are no migrations, map/geocoding, PDF reports, configurable schedules or water-balance model, pressure-drop analytics, alert notification integrations, complete maintenance/repair verification lifecycle, or production observability/backup system. Use measured compatible inlet/outlet boundaries and matching time windows before implementing network water-balance claims. Sensor calibration is recorded only as a future extension; flow values must be calibrated at the hardware/device layer.
+MIT - see `LICENSE`.

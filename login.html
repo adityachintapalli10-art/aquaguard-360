@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AquaGuard 360 - Admin login</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="login-page">
+  <main class="login-card">
+    <h1>AQUAGUARD 360</h1>
+    <p class="muted">Smart Water Monitoring &amp; Leakage Detection</p>
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    <form method="post" autocomplete="on">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Username <input name="username" required autofocus autocomplete="username"></label>
+      <label>Password <input name="password" type="password" required autocomplete="current-password"></label>
+      <button type="submit" class="btn primary">Sign in</button>
+    </form>
+    <p class="muted small">Authorized administrators only. There is no public sign-up.</p>
+  </main>
+</body>
+</html>
